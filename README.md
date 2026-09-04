@@ -28,13 +28,16 @@ python jkanime_dl.py <URL>
 ```bash
 # Whole series, Mediafire links
 uv run jkanime_dl.py https://jkanime.net/tensei-shitara-slime-datta-ken/
-
+```
+```bash
 # All seasons/OVAs of the franchise + CSV report
 uv run jkanime_dl.py https://jkanime.net/tensei-shitara-slime-datta-ken/ --seasons --detail
-
+```
+```bash
 # One JDownloader package per season, ready to import
 uv run jkanime_dl.py https://jkanime.net/tensei-shitara-slime-datta-ken/ --seasons --crawljobs
-
+```
+```bash
 # For more control and options use
 uv run jkanime_dl.py --help
 ```
