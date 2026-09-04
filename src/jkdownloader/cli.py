@@ -1,4 +1,4 @@
-"""Interfaz de linha de comandos y orquestacion principal."""
+"""Command-line interface and main orchestration."""
 
 import argparse
 import csv
@@ -9,350 +9,331 @@ import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .extraction import procesar_episodio
+from .extraction import process_episode
 from .jkanime import (
-    buscar_ultimo_episodio,
-    descubrir_familia,
-    existe_episodio,
-    normalizar_serie,
-    validar_serie,
+    discover_family,
+    episode_exists,
+    find_last_episode,
+    normalize_series,
+    validate_series,
 )
 
 
 def main():
     if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(errors="replace")
+        sys.stdout.reconfigure(errors="replace")  # ty: ignore[call-non-callable]
 
     parser = argparse.ArgumentParser(
-        description="Extrae los enlaces de descarga de una serie completa de "
-        "jkanime.net y los guarda en un .txt para JDownloader."
+        description="Extract download links from a full series on "
+        "jkanime.net and save them to a .txt for JDownloader."
     )
     parser.add_argument(
-        "serie",
-        help="URL de la serie o slug. Ej: "
+        "series",
+        help="Series URL or slug. e.g. "
         "https://jkanime.net/tensei-shitara-slime-datta-ken/",
     )
     parser.add_argument(
-        "--temporadas",
+        "--seasons",
         action="store_true",
-        help="descubrir y procesar TODAS las temporadas/OVAs "
-        "relacionadas de la franquicia",
+        help="discover and process ALL related seasons/OVAs of the franchise",
     )
     parser.add_argument(
         "-o",
         "--output",
-        metavar="ARCHIVO",
-        help="archivo .txt de salida (por defecto: mediafire_<serie>.txt)",
+        metavar="FILE",
+        help="output .txt file (default: mediafire_<series>.txt)",
     )
     parser.add_argument(
-        "--inicio", type=int, default=1, help="primer capitulo a procesar (defecto: 1)"
+        "--start", type=int, default=1, help="first episode to process (default: 1)"
     )
     parser.add_argument(
-        "--fin",
+        "--end",
         type=int,
         default=0,
-        help="ultimo capitulo a procesar (defecto: autodetectar "
-        "el total buscando el primer 404)",
+        help="last episode to process (default: auto-detect "
+        "total by finding the first 404)",
     )
     parser.add_argument(
-        "--servidor",
+        "--server",
         default="mediafire",
-        help="servidor principal: mediafire (defecto), mega, ... o 'todos'",
+        help="primary server: mediafire (default), mega, ... or 'all'",
     )
     parser.add_argument(
         "--fallback",
         default="mega",
-        help="servidores de respaldo por orden, separados por "
-        "comas (defecto: mega). Ej: --fallback mega,1ficher",
+        help="fallback servers in order, comma-separated "
+        "(default: mega). e.g. --fallback mega,1fichier",
     )
     parser.add_argument(
-        "--no-verificar",
-        dest="verificar",
+        "--no-verify",
+        dest="verify",
         action="store_false",
         default=True,
-        help="no comprobar si los enlaces de Mediafire siguen "
-        "vivos (mas rapido, sin respaldo automatico)",
+        help="skip checking if Mediafire links are still alive "
+        "(faster, no automatic fallback)",
     )
     parser.add_argument(
-        "--workers", type=int, default=6, help="peticiones simultaneas (defecto: 6)"
+        "--workers", type=int, default=6, help="concurrent requests (default: 6)"
     )
     parser.add_argument(
-        "--detalle",
+        "--detail",
         action="store_true",
-        help="crear ademas un .csv con temporada, capitulo, "
-        "servidor, idioma, tamano y estado de cada enlace",
+        help="also create a .csv with season, episode, "
+        "server, language, size and status for each link",
     )
     parser.add_argument(
         "--crawljobs",
         action="store_true",
-        help="crear archivos .crawljob (Folder Watch de "
-        "JDownloader): UN paquete por temporada, sin "
-        "desorden en el LinkGrabber",
+        help="create .crawljob files (JDownloader Folder Watch): "
+        "ONE package per season, no mess in LinkGrabber",
     )
     parser.add_argument(
-        "--destino",
-        metavar="RUTA",
+        "--dest",
+        metavar="PATH",
         default="",
-        help="con --crawljobs: carpeta base de descargas "
-        "(se crea una subcarpeta por temporada)",
+        help="with --crawljobs: base download folder "
+        "(a subfolder is created per season)",
     )
     parser.add_argument(
         "--outdir",
-        metavar="CARPETA",
+        metavar="DIR",
         default="links",
-        help="carpeta donde guardar los archivos generados "
-        "(.txt, .csv, .crawljob). Por defecto: links/",
+        help="directory to save generated files "
+        "(.txt, .csv, .crawljob). Default: links/",
     )
     args = parser.parse_args()
 
-    slug = normalizar_serie(args.serie)
-    primario = args.servidor.strip().lower()
-    todos = primario == "todos"
+    slug = normalize_series(args.series)
+    primary = args.server.strip().lower()
+    all_servers = primary == "all"
     fallbacks = [
         f.strip().lower()
         for f in args.fallback.split(",")
-        if f.strip() and f.strip().lower() != primario
+        if f.strip() and f.strip().lower() != primary
     ]
 
-    if args.temporadas:
-        print("[*] Descubriendo temporadas/OVAs de la franquicia...")
-        print(f"[*] Comprobando serie base: {slug}")
-        datos_base = validar_serie(slug)
-        if datos_base is None:
-            raise SystemExit("[x] La serie no existe en jkanime: " + slug)
-        familia = descubrir_familia(slug)
-        print(
-            "[+] Miembros encontrados ({}): {}".format(len(familia), ", ".join(familia))
-        )
+    if args.seasons:
+        print("[*] Discovering franchise seasons/OVAs...")
+        print(f"[*] Checking base series: {slug}")
+        base_data = validate_series(slug)
+        if base_data is None:
+            raise SystemExit("[x] Series does not exist on jkanime: " + slug)
+        family = discover_family(slug)
+        print("[+] Members found ({}): {}".format(len(family), ", ".join(family)))
     else:
-        familia = [slug]
+        family = [slug]
 
-    nombre_base = f"{primario}_{slug}"
+    base_name = f"{primary}_{slug}"
     if args.outdir:
         os.makedirs(args.outdir, exist_ok=True)
-        salida = os.path.join(args.outdir, args.output or f"{nombre_base}.txt")
+        output = os.path.join(args.outdir, args.output or f"{base_name}.txt")
     else:
-        salida = args.output or f"{nombre_base}.txt"
-    total_enlaces = 0
-    resumen_servidores = Counter()
-    lineas_txt = []
-    filas_csv = []
-    miembros_urls = []
-    sin_enlace_global = []
-    errores_global = []
-    otro_idioma_global = []
-    inicio_t = time.time()
+        output = args.output or f"{base_name}.txt"
+    total_links = 0
+    server_summary = Counter()
+    txt_lines = []
+    csv_rows = []
+    member_urls = []
+    no_link_global = []
+    errors_global = []
+    other_lang_global = []
+    start_t = time.time()
 
-    for idx_temp, slug_temp in enumerate(familia, 1):
+    for idx_season, slug_season in enumerate(family, 1):
         print()
         print("=" * 60)
-        print(f"[{idx_temp}/{len(familia)}] TEMPORADA/MIEMBRO: {slug_temp}")
-        datos = validar_serie(slug_temp)
-        if datos is None:
-            print("    [!] No existe o no responde; se salta.")
+        print(f"[{idx_season}/{len(family)}] SEASON/MEMBER: {slug_season}")
+        data = validate_series(slug_season)
+        if data is None:
+            print("    [!] Does not exist or not responding; skipping.")
             continue
-        titulo, _ = datos
-        print(f"[+] {titulo}")
+        title, _ = data
+        print(f"[+] {title}")
 
         cache = {}
-        if args.fin > 0:
-            ultimo = args.fin
-            if not existe_episodio(slug_temp, args.inicio, cache):
+        if args.end > 0:
+            last = args.end
+            if not episode_exists(slug_season, args.start, cache):
                 print(
-                    f"    [!] El capitulo {args.inicio} no existe; se salta esta entrega."
+                    f"    [!] Episode {args.start} does not exist; skipping this entry."
                 )
                 continue
-            print(f"[*] Rango forzado: capitulos {args.inicio} a {ultimo}")
+            print(f"[*] Forced range: episodes {args.start} to {last}")
         else:
-            print("[*] Detectando total de episodios (busqueda binaria)...")
-            ultimo = buscar_ultimo_episodio(slug_temp, cache)
-            if ultimo == 0:
-                print("    [!] Sin capitulos; se salta esta entrega.")
+            print("[*] Detecting total episodes (binary search)...")
+            last = find_last_episode(slug_season, cache)
+            if last == 0:
+                print("    [!] No episodes; skipping this entry.")
                 continue
-            print(f"[+] Ultimo episodio: {ultimo}")
+            print(f"[+] Last episode: {last}")
 
-        inicio = max(1, args.inicio)
-        if inicio > ultimo:
-            print(
-                f"    [!] Esta entrega solo llega hasta el capitulo {ultimo}; "
-                "se salta."
-            )
+        start_ep = max(1, args.start)
+        if start_ep > last:
+            print(f"    [!] This entry only goes up to episode {last}; skipping.")
             continue
-        capitulos = list(range(inicio, ultimo + 1))
-        print(f"[*] Procesando {len(capitulos)} capitulos...")
+        episodes = list(range(start_ep, last + 1))
+        print(f"[*] Processing {len(episodes)} episodes...")
 
-        resultado, notas, servidores_usados = {}, {}, {}
-        otro_idioma_cap = {}
+        results, notes, servers_used = {}, {}, {}
+        other_lang_ep = {}
         with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
-            futuros = {
+            futures = {
                 pool.submit(
-                    procesar_episodio,
-                    slug_temp,
+                    process_episode,
+                    slug_season,
                     n,
-                    primario,
+                    primary,
                     fallbacks,
-                    args.verificar,
-                    todos,
+                    args.verify,
+                    all_servers,
                 ): n
-                for n in capitulos
+                for n in episodes
             }
-            hecho = 0
-            for futuro in as_completed(futuros):
-                n, enlaces, servidor_usado, nota, otro_id = futuro.result()
-                if enlaces:
-                    resultado[n] = enlaces
-                    servidores_usados[n] = servidor_usado
-                    otro_idioma_cap[n] = otro_id
+            done = 0
+            for future in as_completed(futures):
+                n, links, server_used, note, other_id = future.result()
+                if links:
+                    results[n] = links
+                    servers_used[n] = server_used
+                    other_lang_ep[n] = other_id
                 else:
-                    notas[n] = nota or "sin datos"
-                hecho += 1
-                print(f"    [{hecho:3d}/{len(capitulos)}] capitulo {n}")
+                    notes[n] = note or "no data"
+                done += 1
+                print(f"    [{done:3d}/{len(episodes)}] episode {n}")
 
-        for n in capitulos:
-            enlaces = resultado.get(n)
-            if enlaces:
-                usado = servidores_usados.get(n) or enlaces[0][1]
-                es_fallback = usado.lower() != primario and not todos
-                marca = f"{usado}*" if es_fallback else usado
-                otro = otro_idioma_cap.get(n, False)
-                for url, servidor, tamano in enlaces:
-                    lineas_txt.append(url)
-                    filas_csv.append(
+        for n in episodes:
+            links = results.get(n)
+            if links:
+                used = servers_used.get(n) or links[0][1]
+                is_fallback = used.lower() != primary and not all_servers
+                tag = f"{used}*" if is_fallback else used
+                other = other_lang_ep.get(n, False)
+                for url, server, size in links:
+                    txt_lines.append(url)
+                    csv_rows.append(
                         (
-                            slug_temp,
-                            titulo,
+                            slug_season,
+                            title,
                             n,
-                            servidor,
-                            "OTRO IDIOMA" if otro else "JP-sub",
-                            tamano,
+                            server,
+                            "OTHER LANG" if other else "JP-sub",
+                            size,
                             "OK",
                             url,
                         )
                     )
-                    total_enlaces += 1
-                resumen_servidores[usado] += 1
-                avisos = []
-                if es_fallback:
-                    avisos.append(f"RESPALDO por {primario} no disponible")
-                if otro:
-                    avisos.append("solo existe en otro idioma")
-                    otro_idioma_global.append(f"{slug_temp}/{n}")
-                aviso = "  <- {}".format(" + ".join(avisos)) if avisos else ""
-                print(
-                    f"  Cap {n:>3}: [{marca}] {enlaces[0][0]} ({enlaces[0][2]}){aviso}"
-                )
+                    total_links += 1
+                server_summary[used] += 1
+                warnings = []
+                if is_fallback:
+                    warnings.append(f"FALLBACK because {primary} unavailable")
+                if other:
+                    warnings.append("only available in another language")
+                    other_lang_global.append(f"{slug_season}/{n}")
+                warning = "  <- {}".format(" + ".join(warnings)) if warnings else ""
+                print(f"  Ep  {n:>3}: [{tag}] {links[0][0]} ({links[0][2]}){warning}")
             else:
-                nota = notas.get(n, "?")
-                filas_csv.append(
+                note = notes.get(n, "?")
+                csv_rows.append(
                     (
-                        slug_temp,
-                        titulo,
+                        slug_season,
+                        title,
                         n,
                         "--",
                         "--",
                         "",
-                        f"sin enlace ({nota})",
+                        f"no link ({note})",
                         "",
                     )
                 )
-                print(f"  Cap {n:>3}: SIN enlace ({nota})")
-                if nota == "404":
+                print(f"  Ep  {n:>3}: NO LINK ({note})")
+                if note == "404":
                     continue
-                if nota and nota.startswith(("error", "HTTP")):
-                    errores_global.append(f"{slug_temp}/{n}")
+                if note and note.startswith(("error", "HTTP")):
+                    errors_global.append(f"{slug_season}/{n}")
                 else:
-                    sin_enlace_global.append(f"{slug_temp}/{n}")
+                    no_link_global.append(f"{slug_season}/{n}")
 
-        urls_miembro = []
-        for n in capitulos:
-            for url, _, _ in resultado.get(n, []):
-                urls_miembro.append(url)
-        if urls_miembro:
-            miembros_urls.append(
-                {"titulo": titulo, "slug": slug_temp, "urls": urls_miembro}
+        urls_member = []
+        for n in episodes:
+            for url, _, _ in results.get(n, []):
+                urls_member.append(url)
+        if urls_member:
+            member_urls.append(
+                {"title": title, "slug": slug_season, "urls": urls_member}
             )
 
     print()
     print("=" * 60)
-    print(f"[=] Enlaces totales: {total_enlaces}")
-    for servidor, cuenta in resumen_servidores.most_common():
-        etiqueta = "capitulos" if not todos else "capitulos (todos los servidores)"
-        print(f"[=] Via {servidor} : {cuenta} {etiqueta}")
-    if sin_enlace_global:
-        print("[!] Sin enlace: {}".format(", ".join(sin_enlace_global)))
-    if errores_global:
+    print(f"[=] Total links: {total_links}")
+    for server, count in server_summary.most_common():
+        label = "episodes" if not all_servers else "episodes (all servers)"
+        print(f"[=] Via {server} : {count} {label}")
+    if no_link_global:
+        print("[!] No link: {}".format(", ".join(no_link_global)))
+    if errors_global:
+        print("[!] Temporary errors (retry them): {}".format(", ".join(errors_global)))
+    if other_lang_global:
         print(
-            "[!] Errores temporales (reintentalos): {}".format(
-                ", ".join(errores_global)
-            )
-        )
-    if otro_idioma_global:
-        print(
-            "[!] Sin version JP-sub (descargada otra version): {}".format(
-                ", ".join(otro_idioma_global)
+            "[!] No JP-sub version (downloaded another version): {}".format(
+                ", ".join(other_lang_global)
             )
         )
 
-    with open(salida, "w", encoding="utf-8", newline="\n") as f:
-        f.writelines(linea + "\n" for linea in lineas_txt)
-    print(f"[+] Enlaces guardados en: {salida}")
+    with open(output, "w", encoding="utf-8", newline="\n") as f:
+        f.writelines(line + "\n" for line in txt_lines)
+    print(f"[+] Links saved to: {output}")
 
-    if args.detalle:
-        detalle_path = salida.rsplit(".", 1)[0] + ".detalle.csv"
-        with open(detalle_path, "w", encoding="utf-8-sig", newline="") as f:
+    if args.detail:
+        detail_path = output.rsplit(".", 1)[0] + ".detail.csv"
+        with open(detail_path, "w", encoding="utf-8-sig", newline="") as f:
             w = csv.writer(f)
             w.writerow(
                 (
-                    "temporada",
-                    "titulo",
-                    "capitulo",
-                    "servidor",
-                    "idioma",
-                    "tamano",
-                    "estado",
+                    "season",
+                    "title",
+                    "episode",
+                    "server",
+                    "language",
+                    "size",
+                    "status",
                     "url",
                 )
             )
-            w.writerows(filas_csv)
-        print(f"[+] Detalle guardado en: {detalle_path}")
+            w.writerows(csv_rows)
+        print(f"[+] Detail saved to: {detail_path}")
 
-    if args.crawljobs and miembros_urls:
+    if args.crawljobs and member_urls:
         if args.outdir:
-            carpeta_cj = os.path.join(args.outdir, nombre_base + "_jdcrawljobs")
+            cj_dir = os.path.join(args.outdir, base_name + "_jdcrawljobs")
         else:
-            carpeta_cj = os.path.splitext(salida)[0] + "_jdcrawljobs"
-        os.makedirs(carpeta_cj, exist_ok=True)
-        paquetes_creados = {}
-        for i, miembro in enumerate(miembros_urls, 1):
-            titulo_m = miembro["titulo"]
-            if titulo_m in paquetes_creados.values():
-                paquete = "{} [{}]".format(titulo_m, miembro["slug"])
+            cj_dir = os.path.splitext(output)[0] + "_jdcrawljobs"
+        os.makedirs(cj_dir, exist_ok=True)
+        packages_created = {}
+        for i, member in enumerate(member_urls, 1):
+            title_m = member["title"]
+            if title_m in packages_created.values():
+                package = "{} [{}]".format(title_m, member["slug"])
             else:
-                paquete = titulo_m
+                package = title_m
             job = {
-                "text": "\n ".join(miembro["urls"]),
-                "packageName": paquete,
+                "text": "\n ".join(member["urls"]),
+                "packageName": package,
                 "enabled": "TRUE",
                 "autoStart": "FALSE",
             }
-            if args.destino:
+            if args.dest:
                 job["downloadFolder"] = (
-                    args.destino.rstrip("\\/") + os.sep + miembro["slug"]
+                    args.dest.rstrip("\\/") + os.sep + member["slug"]
                 )
-            nombre = "{:02d}_{}.crawljob".format(i, miembro["slug"])
-            with open(os.path.join(carpeta_cj, nombre), "w", encoding="utf-8") as f:
+            name = "{:02d}_{}.crawljob".format(i, member["slug"])
+            with open(os.path.join(cj_dir, name), "w", encoding="utf-8") as f:
                 f.write(json.dumps([job], ensure_ascii=False, indent=2) + "\n")
-            paquetes_creados[nombre] = paquete
-        print(
-            f"[+] {len(paquetes_creados)} archivo(s) .crawljob creados en: {carpeta_cj}"
-        )
-        print(
-            "    Para que JDownloader los agrupe por temporada (solo la primera vez):"
-        )
-        print("      1. Ajustes -> Extensiones -> activa 'Folder Watch'.")
-        print("      2. Forma facil: arrastra los .crawljob a la ventana de")
-        print("         LinkGrabber (los trata igual que contenedores .DLC).")
-        print(
-            "         Forma automatijobs you also get ONE package per season, no mess.)"
-        )
-    print(f"[i] Total time: {time.time() - start_time:.1f} s")
+            packages_created[name] = package
+        print(f"[+] {len(packages_created)} .crawljob file(s) created in: {cj_dir}")
+        print("    To group by season in JDownloader (first time only):")
+        print("      1. Settings -> Extensions -> enable 'Folder Watch'.")
+        print("      2. Easy way: drag the .crawljob files to the")
+        print("         LinkGrabber window (treated like .DLC containers).")
+        print("         Automated way: point Folder Watch to the .crawljob dir.")
+    print(f"[i] Total time: {time.time() - start_t:.1f} s")

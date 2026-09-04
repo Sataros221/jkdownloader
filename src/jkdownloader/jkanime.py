@@ -27,9 +27,7 @@ def validate_series(slug):
     if r.status_code == 404:
         return None
     if r.status_code != 200:
-        raise SystemExit(
-            f"[x] jkanime returned HTTP {r.status_code} for series {slug}"
-        )
+        raise SystemExit(f"[x] jkanime returned HTTP {r.status_code} for series {slug}")
     m = RE_TITLE.search(r.text)
     title = m.group(1).strip() if m else slug
     title = re.split(r"\s+-\s+anime\s", title)[0].strip()
