@@ -11,9 +11,11 @@ def activate_cloudscraper():
     global SESSION
     try:
         import cloudscraper
+
         new_session = cloudscraper.create_scraper()
-        new_session.headers.update({"Accept-Language": "es-ES,es;q=0.9",
-                                    "Referer": BASE + "/"})
+        new_session.headers.update(
+            {"Accept-Language": "es-ES,es;q=0.9", "Referer": BASE + "/"}
+        )
         SESSION = new_session
         print("[!] Block detected (403/503): retrying with cloudscraper...")
         return True
@@ -40,7 +42,7 @@ def http_get(url, timeout=25, stream=False):
 
 
 def episode_status_code(slug, n):
-    url = "{}/{}/{}/".format(BASE, slug, n)
+    url = f"{BASE}/{slug}/{n}/"
     try:
         with SESSION.get(url, timeout=25, stream=True) as r:
             return r.status_code

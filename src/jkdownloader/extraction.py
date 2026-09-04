@@ -6,7 +6,7 @@ import json
 
 import requests
 
-from .core import BASE, DEAD_MARKERS, REDIRECTOR, RE_PAIRS, RE_SERVERS
+from .core import BASE, DEAD_MARKERS, RE_PAIRS, RE_SERVERS, REDIRECTOR
 from .http import http_get
 
 
@@ -22,9 +22,10 @@ def decode_entry(entry):
     lang = get_language(entry)
     slug = str(entry.get("slug", "")).strip()
     try:
-        remote = base64.b64decode(entry.get("remote", "")).decode(
-            "utf-8", "replace").strip()
-    except (binascii.Error, ValueError):
+        remote = (
+            base64.b64decode(entry.get("remote", "")).decode("utf-8", "replace").strip()
+        )
+    except binascii.Error, ValueError:
         remote = ""
     if server.lower() == "mediafire" and remote:
         url = remote.rstrip("/") + "/" + slug if slug else remote
@@ -68,22 +69,26 @@ def mega_alive(url):
     if not handle:
         return True
     try:
-        r = requests.post("https://g.api.mega.co.nz/cs", params={"id": "0"},
-                          data=json.dumps([{"a": "g", "p": handle}]), timeout=15)
+        r = requests.post(
+            "https://g.api.mega.co.nz/cs",
+            params={"id": "0"},
+            data=json.dumps([{"a": "g", "p": handle}]),
+            timeout=15,
+        )
         data = r.json()
     except Exception:
-        print("[!] Mega API request failed for: {}".format(url))
+        print(f"[!] Mega API request failed for: {url}")
         return False
     if isinstance(data, list) and data:
         d = data[0]
         if isinstance(d, int):
             if d < 0:
-                print("[!] Mega link dead (API error {}): {}".format(d, url))
+                print(f"[!] Mega link dead (API error {d}): {url}")
                 return False
             return True
         if isinstance(d, dict):
             return "s" in d or "at" in d
-    print("[!] Unexpected Mega API response: {}".format(data))
+    print(f"[!] Unexpected Mega API response: {data}")
     return False
 
 
@@ -127,9 +132,9 @@ def _try_group(group, primary, fallbacks, verify):
         alive = [d for d in primaries if link_alive(d[0], d[1], True)]
         if alive:
             return alive, alive[0][1], None
-        reason = "{} dead".format(primary)
+        reason = f"{primary} dead"
     else:
-        reason = "no {}".format(primary)
+        reason = f"no {primary}"
 
     for fb in fallbacks:
         for e in group:
@@ -137,43 +142,38 @@ def _try_group(group, primary, fallbacks, verify):
             if server.lower() == fb:
                 _, _, direct_url, redirect_slug = decode_entry(e)
                 size = str(e.get("size", "?")).strip()
-                if direct_url and link_alive(direct_url, server or fb,
-                                             verify):
-                    return ([(direct_url, server or fb, size)],
-                            server or fb, reason)
+                if direct_url and link_alive(direct_url, server or fb, verify):
+                    return ([(direct_url, server or fb, size)], server or fb, reason)
                 if redirect_slug:
                     final = resolve_redirector(redirect_slug)
                     if final and link_alive(final, server or fb, verify):
-                        return ([(final, server or fb, size)],
-                                server or fb, reason)
+                        return ([(final, server or fb, size)], server or fb, reason)
     return [], None, reason
 
 
 def choose_links(entries, primary, fallbacks, verify):
     preferred = [e for e in entries if get_language(e) == 1]
-    links, server, reason = _try_group(preferred, primary,
-                                       fallbacks, verify)
+    links, server, reason = _try_group(preferred, primary, fallbacks, verify)
     if links:
         return links, server, reason, False
     alternate = [e for e in entries if get_language(e) != 1]
     if alternate:
-        links, server, _ = _try_group(alternate, primary,
-                                      fallbacks, verify)
+        links, server, _ = _try_group(alternate, primary, fallbacks, verify)
         if links:
             return links, server, "only in another language", True
     return [], None, reason, False
 
 
 def process_episode(slug, n, primary, fallbacks, verify, all_servers):
-    url = "{}/{}/{}/".format(BASE, slug, n)
+    url = f"{BASE}/{slug}/{n}/"
     try:
         r = http_get(url)
     except requests.RequestException as exc:
-        return n, None, None, "network error ({})".format(exc.__class__.__name__), False
+        return n, None, None, f"network error ({exc.__class__.__name__})", False
     if r.status_code == 404:
         return n, None, None, "404", False
     if r.status_code != 200:
-        return n, None, None, "HTTP {}".format(r.status_code), False
+        return n, None, None, f"HTTP {r.status_code}", False
 
     entries = parse_servers(r.text)
     if all_servers:
@@ -194,7 +194,8 @@ def process_episode(slug, n, primary, fallbacks, verify, all_servers):
         return n, None, None, "no links", False
 
     links, used_server, reason, other_lang = choose_links(
-        entries, primary, fallbacks, verify)
+        entries, primary, fallbacks, verify
+    )
     if links:
         return n, links, used_server, reason, other_lang
     return n, None, None, reason or "no links", False

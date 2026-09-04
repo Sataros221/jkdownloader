@@ -14,19 +14,22 @@ def normalize_series(text):
     if text.lower().startswith("http"):
         path = urlparse(text).path.strip("/")
         if not path:
-            raise SystemExit("[x] Invalid URL. Use the SERIES URL, e.g.:\n"
-                             "    https://jkanime.net/tensei-shitara-slime-datta-ken/")
+            raise SystemExit(
+                "[x] Invalid URL. Use the SERIES URL, e.g.:\n"
+                "    https://jkanime.net/tensei-shitara-slime-datta-ken/"
+            )
         return path.split("/")[0]
     return text.split("/")[0]
 
 
 def validate_series(slug):
-    r = http_get("{}/{}/".format(BASE, slug))
+    r = http_get(f"{BASE}/{slug}/")
     if r.status_code == 404:
         return None
     if r.status_code != 200:
-        raise SystemExit("[x] jkanime returned HTTP {} for series {}".format(
-            r.status_code, slug))
+        raise SystemExit(
+            f"[x] jkanime returned HTTP {r.status_code} for series {slug}"
+        )
     m = RE_TITLE.search(r.text)
     title = m.group(1).strip() if m else slug
     title = re.split(r"\s+-\s+anime\s", title)[0].strip()
@@ -40,14 +43,17 @@ def discover_family(slug):
     while queue and len(order) < MAX_SEASONS:
         current = queue.pop(0)
         try:
-            r = http_get("{}/{}/".format(BASE, current))
+            r = http_get(f"{BASE}/{current}/")
         except requests.RequestException:
             continue
         if r.status_code != 200:
             continue
         for cand in RE_LINKS.findall(r.text):
-            if (cand.startswith(prefix) and cand not in order
-                    and len(order) < MAX_SEASONS):
+            if (
+                cand.startswith(prefix)
+                and cand not in order
+                and len(order) < MAX_SEASONS
+            ):
                 order.append(cand)
                 queue.append(cand)
     return order
@@ -56,7 +62,7 @@ def discover_family(slug):
 def episode_exists(slug, n, cache):
     if n in cache:
         return cache[n]
-    cache[n] = (episode_status_code(slug, n) == 200)
+    cache[n] = episode_status_code(slug, n) == 200
     return cache[n]
 
 
